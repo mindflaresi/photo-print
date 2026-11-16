@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Passport Photo Guide</title>
+<style>
+:root{
+  --bg:#f4f5f7; --card:#fff; --fg:#16181d; --muted:#5d6470; --line:#d9dce2;
+  --accent:#0a66d8; --accent-fg:#fff; --btn:#e8ebf0; --warn:#8a5a00; --warnbg:#fff6e0;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#0f1115; --card:#1a1d23; --fg:#eceef2; --muted:#9aa2ae; --line:#2e333c;
+    --accent:#3d8bff; --accent-fg:#fff; --btn:#2a2f37; --warn:#ffcf70; --warnbg:#3a2e12; }
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-text-size-adjust:100%}
+main{max-width:520px;margin:0 auto;padding:12px 14px calc(28px + env(safe-area-inset-bottom))}
+h1{font-size:1.3rem;margin:6px 0 10px}
+h2{font-size:1.05rem;margin:0 0 8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 0 12px}
+label.field{display:block;font-weight:600;font-size:.9rem;margin:0 0 6px;color:var(--muted)}
+select{width:100%;min-height:48px;font-size:1rem;padding:8px 10px;border-radius:10px;
+  border:1px solid var(--line);background:var(--btn);color:var(--fg)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:48px;padding:10px 16px;
+  font-size:1rem;font-weight:600;border-radius:12px;border:0;background:var(--btn);color:var(--fg);
+  text-decoration:none;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}
+.btn.primary{background:var(--accent);color:var(--accent-fg)}
+.btn:disabled,.btn[aria-disabled=true]{opacity:.45;pointer-events:none}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row>.btn{flex:1 1 0}
+.pick{position:relative;overflow:hidden;width:100%}
+.pick input{position:absolute;inset:0;opacity:0;font-size:100px;cursor:pointer}
+.note{font-size:.88rem;color:var(--muted);margin:8px 0 0}
+.spec{font-size:.88rem;margin:10px 0 0}
+.spec b{color:var(--fg)}
+.warn{background:var(--warnbg);color:var(--warn);border-radius:10px;padding:8px 10px;font-size:.85rem;margin-top:8px}
+#stage{position:relative;width:100%;border-radius:12px;overflow:hidden;background:#777;
+  touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;cursor:grab}
+#stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#stage .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:#fff;font-weight:600;text-align:center;padding:20px;pointer-events:none;text-shadow:0 1px 3px #000}
+.slider{display:flex;align-items:center;gap:10px;margin-top:12px}
+.slider span{width:74px;font-size:.9rem;color:var(--muted)}
+.slider output{width:52px;text-align:right;font-variant-numeric:tabular-nums;font-size:.9rem}
+input[type=range]{flex:1;height:40px;accent-color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.8rem;color:var(--muted);margin-top:8px}
+.legend i{display:inline-block;width:14px;height:4px;border-radius:2px;vertical-align:middle;margin-right:5px}
+.out img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:#fff;
+  -webkit-touch-callout:default}
+.out .single img{max-width:200px;margin:0 auto}
+.out figure{margin:0 0 14px}
+.out figcaption{font-size:.85rem;color:var(--muted);margin:6px 0}
+ol.tips{padding-left:20px;margin:6px 0 0;font-size:.9rem}
+ol.tips li{margin:4px 0}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <h1>Passport Photo Guide</h1>
+
+  <section class="card">
+    <label class="field" for="preset">Photo size</label>
+    <select id="preset"></select>
+    <div class="spec" id="spec"></div>
+    <div class="warn">Guides are an aid only. Always check the official requirements for your application before printing.</div>
+  </section>
+
+  <section class="card">
+    <div class="row" style="margin-bottom:12px">
+      <label class="btn primary pick">Choose photo
+        <input id="file" type="file" accept="image/*">
+      </label>
+    </div>
+    <div id="stage">
+      <canvas id="photoCv"></canvas>
+      <canvas id="guideCv"></canvas>
+      <div class="empty" id="emptyMsg">Choose a photo to start</div>
+    </div>
+    <div class="legend">
+      <span><i style="background:#ff3b30"></i>Top of head (min–max)</span>
+      <span><i style="background:#ffcc00"></i>Chin</span>
+      <span><i style="background:#34c759"></i>Eye line</span>
+      <span><i style="background:#5ac8fa"></i>Center</span>
+    </div>
+    <p class="note">Drag with one finger to move. Pinch to zoom, twist with two fingers to rotate. Put the chin on the yellow line, the top of the hair inside the red band, and the eyes in the green band.</p>
+    <div class="slider"><span>Zoom</span><input id="zoom" type="range" min="-1" max="1.6" step="0.001" value="0"><output id="zoomOut">100%</output></div>
+    <div class="slider"><span>Rotate</span><input id="rot" type="range" min="-15" max="15" step="0.1" value="0"><output id="rotOut">0°</output></div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="reset" disabled>Reset</button>
+      <button class="btn" id="guidesBtn" aria-pressed="true">Hide guides</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <label class="field" for="sheet">Print sheet</label>
+    <select id="sheet">
+      <option value="4x6">4 × 6 in photo paper (landscape)</option>
+      <option value="letter">US Letter 8.5 × 11 in</option>
+    </select>
+    <div class="row" style="margin-top:12px">
+      <button class="btn primary" id="make" disabled>Create photo &amp; print sheet</button>
+    </div>
+  </section>
+
+  <section class="card out" id="out" hidden>
+    <h2>Your files (300 DPI)</h2>
+    <figure class="single">
+      <figcaption id="singleCap">Single photo</figcaption>
+      <img id="singleImg" alt="Single passport photo">
+      <div class="row" style="margin-top:8px">
+        <a class="btn" id="singleDl" download="passport-photo.jpg">Download</a>
+        <button class="btn" id="singleShare" hidden>Share</button>
+      </div>
+    </figure>
+    <figure>
+      <figcaption id="sheetCap">Print sheet</figcaption>
+      <img id="sheetImg" alt="Print sheet">
+      <div class="row" style="margin-top:8px">
+        <a class="btn primary" id="sheetDl" download="passport-sheet.jpg">Download sheet</a>
+        <button class="btn" id="sheetShare" hidden>Share</button>
+      </div>
+    </figure>
+    <p class="note">Tip: long-press an image and choose <b>Save to Photos</b> or <b>Share</b>.</p>
+    <h2 style="margin-top:12px">Printing</h2>
+    <ol class="tips">
+      <li>Print at <b>100% / Actual size</b>. Turn off “Fit to page” / “Scale to fit”.</li>
+      <li>For the 4×6 sheet, use 4×6 photo paper, or order a regular 4×6 print at a drugstore (CVS, Walgreens, Walmart).</li>
+      <li>After printing, measure one photo with a ruler before cutting to confirm the size.</li>
+      <li>Cut along the thin gray lines.</li>
+    </ol>
+  </section>
+</main>
+
+<script>
+"use strict";
+/* ===== Photo size specs (mm). Edit here. =====
+   w,h: finished photo size. headMin/headMax: chin to top of hair.
+   chin: chin line height above bottom edge (where the guide puts the chin).
+   eyeMin/eyeMax: eye-line band, height above bottom edge. eyeApprox: true if the eye band is a guide, not an official number. */
+const MM_PER_IN = 25.4, DPI = 300;
+const SPECS = [
+  { id:"us", name:"US Passport / Visa – 2×2 in (51×51 mm)", w:50.8, h:50.8, headMin:25.4, headMax:34.925, chin:13,
+    eyeMin:28.575, eyeMax:34.925, eyeApprox:false,
+    text:"2 × 2 in. Head (chin to top of hair) 1 – 1⅜ in (25–35 mm). Eyes 1⅛ – 1⅜ in (28–35 mm) from the bottom. Plain white or off-white background, no glasses." },
+  { id:"pk", name:"Pakistan Passport / NICOP – 35×45 mm", w:35, h:45, headMin:32, headMax:36, chin:5.5,
+    eyeMin:22, eyeMax:28, eyeApprox:true,
+    text:"35 × 45 mm. Face (chin to top of head) about 32–36 mm, roughly 70–80% of the photo height. White background, plain expression." },
+  { id:"schengen", name:"Schengen Visa – 35×45 mm", w:35, h:45, headMin:29, headMax:34, chin:7,
+    eyeMin:22, eyeMax:30, eyeApprox:true,
+    text:"35 × 45 mm. Face (chin to top of head) 29–34 mm. Light, plain background." },
+  { id:"uk", name:"UK Passport – 35×45 mm", w:35, h:45, headMin:29, headMax:34, chin:7,
+    eyeMin:22, eyeMax:30, eyeApprox:true,
+    text:"35 × 45 mm. Head (chin to crown) 29–34 mm. Plain cream or light grey background." },
+];
+const SHEETS = {
+  "4x6":   { name:"4×6 in", w:1800, h:1200 },
+  "letter":{ name:"US Letter", w:2550, h:3300 },
+};
+const mm2px = mm => Math.round(mm / MM_PER_IN * DPI);
+
+/* ===== State ===== */
+const $ = id => document.getElementById(id);
+const stage = $("stage"), photoCv = $("photoCv"), guideCv = $("guideCv");
+let spec = SPECS[0];
+let img = null;          // drawable source (canvas or ImageBitmap), already EXIF-upright
+let iw = 0, ih = 0;
+// transform in OUTPUT pixel coords: image center at (cx,cy), scale k (output px per image px), rotation r (rad)
+const T = { cx:0, cy:0, k:1, r:0 };
+let kFit = 1, showGuides = true;
+let layout = { sw:0, sh:0, fx:0, fy:0, fw:0, fh:0, d:1, dpr:1 }; // stage + frame (CSS px), d = css px per output px
+
+function outSize(){ return { W: mm2px(spec.w), H: mm2px(spec.h) }; }
+
+/* ===== Presets UI ===== */
+SPECS.forEach(s => { const o = document.createElement("option"); o.value = s.id; o.textContent = s.name; $("preset").appendChild(o); });
+function updateSpecText(){
+  const {W,H} = outSize();
+  $("spec").innerHTML = `<b>${spec.name}</b><br>${spec.text}<br>Output: ${W}×${H} px at ${DPI} DPI.` +
+    (spec.eyeApprox ? `<br><span style="opacity:.8">Eye band is an approximate guide.</span>` : "");
+}
+$("preset").addEventListener("change", e => {
+  const prev = outSize();
+  spec = SPECS.find(s => s.id === e.target.value);
+  const now = outSize();
+  layoutStage();
+  if (img) { // keep relative framing: scale transform to new frame size
+    const f = now.H / prev.H;
+    T.cx = now.W/2 + (T.cx - prev.W/2) * f; T.cy = now.H/2 + (T.cy - prev.H/2) * f; T.k *= f;
+    kFit = Math.max(now.W/iw, now.H/ih);
+    syncSliders();
+  }
+  updateSpecText(); draw();
+});
+
+/* ===== Layout ===== */
+function layoutStage(){
+  const {W,H} = outSize();
+  const sw = stage.clientWidth || 360;
+  const sh = Math.round(Math.min(sw * 1.18, (window.innerHeight || 700) * 0.62));
+  stage.style.height = sh + "px";
+  const pad = 0.12;
+  const d = Math.min(sw * (1 - 2*pad) / W, sh * (1 - 2*pad) / H);
+  const fw = W*d, fh = H*d;
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  layout = { sw, sh, fw, fh, fx:(sw-fw)/2, fy:(sh-fh)/2, d, dpr };
+  for (const c of [photoCv, guideCv]) { c.width = Math.round(sw*dpr); c.height = Math.round(sh*dpr); }
+}
+
+/* ===== Drawing ===== */
+function applyT(ctx){ ctx.translate(T.cx, T.cy); ctx.rotate(T.r); ctx.scale(T.k, T.k); ctx.translate(-iw/2, -ih/2); }
+
+function draw(){
+  const { sw, sh, fx, fy, fw, fh, d, dpr } = layout;
+  const p = photoCv.getContext("2d");
+  p.setTransform(1,0,0,1,0,0); p.clearRect(0,0,photoCv.width,photoCv.height);
+  p.setTransform(dpr,0,0,dpr,0,0);
+  p.fillStyle = "#fff"; p.fillRect(fx, fy, fw, fh);
+  if (img) {
+    p.save(); p.translate(fx, fy); p.scale(d, d); applyT(p);
+    p.imageSmoothingQuality = "high"; p.drawImage(img, 0, 0); p.restore();
+  }
+  const g = guideCv.getContext("2d");
+  g.setTransform(1,0,0,1,0,0); g.clearRect(0,0,guideCv.width,guideCv.height);
+  g.setTransform(dpr,0,0,dpr,0,0);
+  // dim outside the frame
+  g.fillStyle = "rgba(0,0,0,0.55)";
+  g.beginPath(); g.rect(0,0,sw,sh); g.rect(fx,fy,fw,fh); g.fill("evenodd");
+  // frame border
+  g.strokeStyle = "#fff"; g.lineWidth = 2; g.strokeRect(fx-1, fy-1, fw+2, fh+2);
+  if (!showGuides) return;
+  const ymm = mm => fy + fh * (1 - mm / spec.h); // height above bottom (mm) -> css y
+  const band = (a, b, color, alpha) => { const y1 = ymm(a), y2 = ymm(b);
+    g.fillStyle = color; g.globalAlpha = alpha; g.fillRect(fx, Math.min(y1,y2), fw, Math.abs(y2-y1)); g.globalAlpha = 1; };
+  const hline = (y, color, dash) => { g.strokeStyle = color; g.lineWidth = 1.5; g.setLineDash(dash || []);
+    g.beginPath(); g.moveTo(fx, y); g.lineTo(fx+fw, y); g.stroke(); g.setLineDash([]); };
+  // top of head band
+  const tMin = spec.chin + spec.headMin, tMax = spec.chin + spec.headMax;
+  band(tMin, tMax, "#ff3b30", 0.18); hline(ymm(tMin), "#ff3b30", [6,4]); hline(ymm(tMax), "#ff3b30", [6,4]);
+  // eye band
+  band(spec.eyeMin, spec.eyeMax, "#34c759", 0.18); hline(ymm(spec.eyeMin), "#34c759", [3,3]); hline(ymm(spec.eyeMax), "#34c759", [3,3]);
+  // chin line
+  hline(ymm(spec.chin), "#ffcc00");
+  // center vertical
+  g.strokeStyle = "#5ac8fa"; g.lineWidth = 1.5; g.setLineDash([6,4]);
+  g.beginPath(); g.moveTo(fx+fw/2, fy); g.lineTo(fx+fw/2, fy+fh); g.stroke(); g.setLineDash([]);
+  // face oval hint (between min/max head size)
+  const midHead = (spec.headMin + spec.headMax)/2, cyMm = spec.chin + midHead/2;
+  g.strokeStyle = "rgba(255,255,255,.7)"; g.lineWidth = 1; g.setLineDash([2,4]);
+  g.beginPath(); g.ellipse(fx+fw/2, ymm(cyMm), (midHead*0.36/spec.w)*fw, (midHead/2/spec.h)*fh, 0, 0, Math.PI*2); g.stroke(); g.setLineDash([]);
+  // labels
+  g.font = "600 11px -apple-system, system-ui, sans-serif"; g.textBaseline = "bottom";
+  const lab = (t, y, c) => { g.fillStyle = "rgba(0,0,0,.6)"; const w = g.measureText(t).width + 8;
+    g.fillRect(fx+fw+4 > sw - w ? fx+2 : fx+fw+4, y-14, w, 14); g.fillStyle = c;
+    g.fillText(t, (fx+fw+4 > sw - w ? fx+2 : fx+fw+4) + 4, y-1); };
+  lab("Top", ymm(tMax) + 7, "#ff8a80"); lab("Eyes", ymm((spec.eyeMin+spec.eyeMax)/2) + 7, "#7ee2a0"); lab("Chin", ymm(spec.chin) + 7, "#ffdf66");
+}
+
+/* ===== Transform helpers ===== */
+function zoomRotateAbout(px, py, f, dr){
+  // scale by f and rotate by dr around output-space point (px,py)
+  const dx = T.cx - px, dy = T.cy - py, c = Math.cos(dr), s = Math.sin(dr);
+  T.cx = px + f*(c*dx - s*dy); T.cy = py + f*(s*dx + c*dy);
+  T.k *= f; T.r += dr;
+}
+const MAX_R = 15 * Math.PI/180;
+function clampT(){
+  const lo = kFit * Math.exp(-1), hi = kFit * Math.exp(1.6);
+  T.k = Math.min(hi, Math.max(lo, T.k));
+  T.r = Math.max(-MAX_R, Math.min(MAX_R, T.r));
+}
+function syncSliders(){
+  const z = Math.log(T.k / kFit); $("zoom").value = z; $("zoomOut").textContent = Math.round(Math.exp(z)*100) + "%";
+  const deg = T.r * 180/Math.PI; $("rot").value = deg; $("rotOut").textContent = deg.toFixed(1) + "°";
+}
+function resetT(){
+  const {W,H} = outSize();
+  kFit = Math.max(W/iw, H/ih);
+  T.k = kFit; T.r = 0; T.cx = W/2; T.cy = H/2;
+  syncSliders(); draw();
+}
+// css point on stage -> output coords
+function toOut(x, y){ return [ (x - layout.fx)/layout.d, (y - layout.fy)/layout.d ]; }
+function stagePt(e){ const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+
+/* ===== Gestures (pointer events: touch + mouse + pen) ===== */
+const ptrs = new Map(); let g0 = null;
+function gestureStart(){
+  const pts = [...ptrs.values()];
+  if (pts.length === 1) g0 = { x:pts[0][0], y:pts[0][1] };
+  else if (pts.length >= 2) {
+    const [a,b] = pts;
+    g0 = { mx:(a[0]+b[0])/2, my:(a[1]+b[1])/2, dist:Math.hypot(b[0]-a[0], b[1]-a[1]) || 1, ang:Math.atan2(b[1]-a[1], b[0]-a[0]) };
+  }
+}
+stage.addEventListener("pointerdown", e => {
+  if (!img) return; e.preventDefault();
+  stage.setPointerCapture && stage.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId, stagePt(e)); gestureStart(); stage.style.cursor = "grabbing";
+});
+stage.addEventListener("pointermove", e => {
+  if (!img || !ptrs.has(e.pointerId)) return; e.preventDefault();
+  ptrs.set(e.pointerId, stagePt(e));
+  const pts = [...ptrs.values()], d = layout.d;
+  if (pts.length === 1 && g0 && g0.x !== undefined) {
+    T.cx += (pts[0][0] - g0.x)/d; T.cy += (pts[0][1] - g0.y)/d;
+    g0.x = pts[0][0]; g0.y = pts[0][1];
+  } else if (pts.length >= 2 && g0 && g0.dist !== undefined) {
+    const [a,b] = pts;
+    const mx = (a[0]+b[0])/2, my = (a[1]+b[1])/2;
+    const dist = Math.hypot(b[0]-a[0], b[1]-a[1]) || 1, ang = Math.atan2(b[1]-a[1], b[0]-a[0]);
+    // pan by midpoint movement, then zoom/rotate around new midpoint
+    T.cx += (mx - g0.mx)/d; T.cy += (my - g0.my)/d;
+    let f = dist / g0.dist, dr = ang - g0.ang;
+    if (dr > Math.PI) dr -= 2*Math.PI; if (dr < -Math.PI) dr += 2*Math.PI;
+    const kBefore = T.k, rBefore = T.r;
+    const [ox, oy] = toOut(mx, my);
+    // compute clamped values first so the pivot stays consistent
+    const lo = kFit*Math.exp(-1), hi = kFit*Math.exp(1.6);
+    f = Math.min(hi, Math.max(lo, kBefore*f)) / kBefore;
+    dr = Math.max(-MAX_R, Math.min(MAX_R, rBefore + dr)) - rBefore;
+    zoomRotateAbout(ox, oy, f, dr);
+    g0 = { mx, my, dist, ang };
+  }
+  syncSliders(); draw();
+});
+function endPtr(e){ if (!ptrs.has(e.pointerId)) return; ptrs.delete(e.pointerId); gestureStart(); if (!ptrs.size) stage.style.cursor = "grab"; }
+["pointerup","pointercancel","lostpointercapture"].forEach(t => stage.addEventListener(t, endPtr));
+// Mouse wheel zoom (desktop testing); shift+wheel rotates
+stage.addEventListener("wheel", e => {
+  if (!img) return; e.preventDefault();
+  const [ox, oy] = toOut(...stagePt(e));
+  if (e.shiftKey) { const nr = Math.max(-MAX_R, Math.min(MAX_R, T.r + (e.deltaY > 0 ? 1 : -1)*Math.PI/360)); zoomRotateAbout(ox, oy, 1, nr - T.r); }
+  else { const lo = kFit*Math.exp(-1), hi = kFit*Math.exp(1.6); const nk = Math.min(hi, Math.max(lo, T.k*Math.exp(-e.deltaY*0.0015))); zoomRotateAbout(ox, oy, nk/T.k, 0); }
+  syncSliders(); draw();
+}, { passive:false });
+// Block Safari page pinch-zoom / scroll while touching the stage
+["gesturestart","gesturechange","gestureend"].forEach(t => document.addEventListener(t, e => e.preventDefault(), { passive:false }));
+stage.addEventListener("touchstart", e => e.preventDefault(), { passive:false });
+stage.addEventListener("touchmove", e => e.preventDefault(), { passive:false });
+
+/* ===== Sliders / buttons ===== */
+$("zoom").addEventListener("input", e => {
+  if (!img) return; const nk = kFit * Math.exp(+e.target.value);
+  const {W,H} = outSize(); zoomRotateAbout(W/2, H/2, nk/T.k, 0); syncSliders(); draw();
+});
+$("rot").addEventListener("input", e => {
+  if (!img) return; const nr = (+e.target.value) * Math.PI/180;
+  const {W,H} = outSize(); zoomRotateAbout(W/2, H/2, 1, nr - T.r); syncSliders(); draw();
+});
+$("reset").addEventListener("click", () => img && resetT());
+$("guidesBtn").addEventListener("click", e => {
+  showGuides = !showGuides; e.target.textContent = showGuides ? "Hide guides" : "Show guides";
+  e.target.setAttribute("aria-pressed", showGuides); draw();
+});
+
+/* ===== Loading (EXIF orientation honored) ===== */
+const MAX_SRC = 3000; // downscale huge photos to keep iOS memory in check
+async function decode(file){
+  // createImageBitmap applies EXIF orientation with imageOrientation:"from-image" (default in modern browsers).
+  if (window.createImageBitmap) {
+    try { return await createImageBitmap(file, { imageOrientation:"from-image" }); } catch (_) {}
+  }
+  // Fallback: <img> (Safari 13.4+ / all modern browsers apply EXIF orientation via image-orientation:from-image)
+  const url = URL.createObjectURL(file);
+  try {
+    const im = new Image(); im.decoding = "async"; im.src = url;
+    await (im.decode ? im.decode() : new Promise((ok, no) => { im.onload = ok; im.onerror = no; }));
+    return im;
+  } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+}
+async function loadFile(file){
+  if (!file) return;
+  $("emptyMsg").textContent = "Loading…"; $("emptyMsg").hidden = false;
+  try {
+    const src = await decode(file);
+    const sw = src.width || src.naturalWidth, sh = src.height || src.naturalHeight;
+    const s = Math.min(1, MAX_SRC / Math.max(sw, sh));
+    const c = document.createElement("canvas"); c.width = Math.round(sw*s); c.height = Math.round(sh*s);
+    const cx = c.getContext("2d"); cx.imageSmoothingQuality = "high"; cx.drawImage(src, 0, 0, c.width, c.height);
+    if (src.close) src.close();
+    img = c; iw = c.width; ih = c.height;
+    $("emptyMsg").hidden = true; $("reset").disabled = false; $("make").disabled = false;
+    $("out").hidden = true;
+    resetT();
+  } catch (err) {
+    $("emptyMsg").textContent = "Couldn't open that photo. Try another (JPEG/HEIC/PNG).";
+    console.error(err);
+  }
+}
+$("file").addEventListener("change", e => { loadFile(e.target.files[0]); e.target.value = ""; });
+
+/* ===== Output ===== */
+function renderPhoto(){
+  const {W,H} = outSize();
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0,0,W,H);
+  x.imageSmoothingQuality = "high"; applyT(x); x.drawImage(img, 0, 0);
+  return c;
+}
+function computeLayout(SW, SH, w, h, minGap, margin){
+  // max copies with at least minGap between photos and margin at the edges
+  const fit = (L, s) => Math.max(0, Math.floor((L - 2*margin + minGap) / (s + minGap)));
+  return { cols: fit(SW, w), rows: fit(SH, h) };
+}
+function renderSheet(photo, key){
+  const S = SHEETS[key], SW = S.w, SH = S.h, w = photo.width, h = photo.height;
+  const c = document.createElement("canvas"); c.width = SW; c.height = SH;
+  const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0,0,SW,SH);
+  // Prefer gaps (>= 0.1 in) and a margin; if that loses copies, allow photos to touch (cut lines on shared edges).
+  const GAP = 30, MARGIN = 30;
+  let L = computeLayout(SW, SH, w, h, GAP, MARGIN), gapped = true;
+  const L0 = computeLayout(SW, SH, w, h, 0, 0);
+  if (L0.cols*L0.rows > L.cols*L.rows) { L = L0; gapped = false; }
+  const { cols, rows } = L;
+  // spread leftover space evenly (space-evenly), integer px
+  const gx = cols ? (SW - cols*w) / (cols + 1) : 0, gy = rows ? (SH - rows*h) / (rows + 1) : 0;
+  const xs = [], ys = [];
+  for (let i = 0; i < cols; i++) xs.push(Math.round(gx + i*(w + gx)));
+  for (let j = 0; j < rows; j++) ys.push(Math.round(gy + j*(h + gy)));
+  gapped = gx >= 4 && gy >= 4;               // real gaps exist after spreading leftover space
+  const cut = () => {
+    x.strokeStyle = "#c4c4c4"; x.lineWidth = 2; x.beginPath();
+    const vx = new Set(), hy = new Set();
+    xs.forEach(a => { vx.add(a); vx.add(a + w); }); ys.forEach(b => { hy.add(b); hy.add(b + h); });
+    vx.forEach(v => { const p = Math.min(SW-1, Math.max(1, v)); x.moveTo(p, 0); x.lineTo(p, SH); });
+    hy.forEach(v => { const p = Math.min(SH-1, Math.max(1, v)); x.moveTo(0, p); x.lineTo(SW, p); });
+    x.stroke();
+  };
+  cut();                                         // cut lines run through gaps/margins
+  for (const yy of ys) for (const xx of xs) x.drawImage(photo, xx, yy);
+  if (!gapped) cut();                            // touching photos: draw shared edges on top
+  // label at the edge, in the bottom margin if there is room
+  const label = `${spec.name.split(" – ")[0]} ${spec.w===50.8 ? "2×2 in" : spec.w+"×"+spec.h+" mm"} · ${cols*rows} copies · ${S.name} @ ${DPI} DPI · print at 100% (actual size)`;
+  const room = SH - (ys.length ? ys[ys.length-1] + h : 0);
+  x.fillStyle = "#8a8a8a"; x.textBaseline = "middle";
+  const pill = (fs, px, py) => { const tw = x.measureText(label).width; x.fillStyle = "#fff"; x.fillRect(px-6, py-fs*0.65, tw+12, fs*1.3); x.fillStyle = "#8a8a8a"; x.fillText(label, px, py); };
+  if (room >= 22) { const fs = Math.min(24, Math.floor(room*0.55)); x.font = `${fs}px -apple-system, system-ui, sans-serif`; pill(fs, 20, SH - room/2); }
+  else {
+    const rRoom = SW - (xs.length ? xs[xs.length-1] + w : 0);
+    if (rRoom >= 22) { x.save(); x.translate(SW - rRoom/2, SH - 20); x.rotate(-Math.PI/2);
+      const fs = Math.min(24, Math.floor(rRoom*0.55)); x.font = `${fs}px -apple-system, system-ui, sans-serif`; pill(fs, 0, 0); x.restore(); }
+  }
+  return { canvas:c, count: cols*rows, cols, rows, gapped };
+}
+// JPEG with 300 DPI written into the JFIF header (so print apps know the physical size)
+function toJpeg300(canvas){
+  return new Promise(res => canvas.toBlob(async b => {
+    const buf = new Uint8Array(await b.arrayBuffer());
+    if (buf[2]===0xFF && buf[3]===0xE0 && String.fromCharCode(...buf.slice(6,11)) === "JFIF\0") {
+      buf[13] = 1; buf[14] = DPI>>8; buf[15] = DPI&255; buf[16] = DPI>>8; buf[17] = DPI&255;
+      return res(new Blob([buf], { type:"image/jpeg" }));
+    }
+    res(b);
+  }, "image/jpeg", 0.95));
+}
+const urls = [];
+function setOut(imgEl, dlEl, shareEl, blob, name){
+  const u = URL.createObjectURL(blob); urls.push(u);
+  imgEl.src = u; dlEl.href = u; dlEl.download = name;
+  const file = new File([blob], name, { type: blob.type });
+  if (navigator.share && navigator.canShare && navigator.canShare({ files:[file] })) {
+    shareEl.hidden = false;
+    shareEl.onclick = () => navigator.share({ files:[file], title:name }).catch(() => {});
+  } else shareEl.hidden = true;
+}
+let lastResult = null, gen = 0;
+async function make(){
+  if (!img) return;
+  $("make").disabled = true; $("make").textContent = "Creating…";
+  try {
+    urls.splice(0).forEach(u => URL.revokeObjectURL(u));
+    const photo = renderPhoto();
+    const key = $("sheet").value, sheet = renderSheet(photo, key);
+    const [pb, sb] = await Promise.all([toJpeg300(photo), toJpeg300(sheet.canvas)]);
+    setOut($("singleImg"), $("singleDl"), $("singleShare"), pb, `passport-${spec.id}-${photo.width}x${photo.height}.jpg`);
+    setOut($("sheetImg"), $("sheetDl"), $("sheetShare"), sb, `passport-${spec.id}-sheet-${key}.jpg`);
+    $("singleCap").textContent = `Single photo · ${photo.width}×${photo.height} px (${spec.w===50.8?"2×2 in":spec.w+"×"+spec.h+" mm"})`;
+    $("sheetCap").textContent = `${SHEETS[key].name} sheet · ${sheet.canvas.width}×${sheet.canvas.height} px · ${sheet.count} copies`;
+    $("out").hidden = false;
+    lastResult = { gen: ++gen, photoW:photo.width, photoH:photo.height, sheetW:sheet.canvas.width, sheetH:sheet.canvas.height,
+      count:sheet.count, cols:sheet.cols, rows:sheet.rows, gapped:sheet.gapped, photoBytes:pb.size, sheetBytes:sb.size };
+    $("out").scrollIntoView({ behavior:"smooth", block:"start" });
+  } finally { $("make").disabled = false; $("make").textContent = "Create photo & print sheet"; }
+}
+$("make").addEventListener("click", make);
+
+/* ===== Init ===== */
+let rT; window.addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(() => { layoutStage(); draw(); }, 100); });
+layoutStage(); updateSpecText(); draw();
+// test hook (harmless)
+window.__pp = { T, get spec(){return spec}, get layout(){return layout}, get result(){return lastResult}, get size(){return [iw,ih]} };
+</script>
+</body>
+</html>
