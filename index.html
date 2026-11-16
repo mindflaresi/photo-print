@@ -48,6 +48,20 @@ select{width:100%;min-height:48px;font-size:1rem;padding:8px 10px;border-radius:
 .slider span{width:74px;font-size:.9rem;color:var(--muted)}
 .slider output{width:52px;text-align:right;font-variant-numeric:tabular-nums;font-size:.9rem}
 .slider .step{flex:0 0 48px;width:48px;padding:0;font-size:1.6rem;line-height:1}
+.adjust{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;touch-action:manipulation;
+  -webkit-user-select:none;user-select:none}
+.adjust .cell{display:flex;flex-direction:column;gap:4px;min-width:0}
+.adjust .cap{font-size:.8rem;font-weight:600;color:var(--muted)}
+.adjust .pair{display:flex;gap:8px;min-width:0}
+.adjust .span{grid-column:1 / -1}
+.adjust .fine{flex:1 1 0;min-width:44px;min-height:48px;padding:0 8px;touch-action:manipulation;
+  -webkit-touch-callout:none;white-space:nowrap}
+.adjust .cell .fine{font-size:1.5rem;line-height:1}
+.adjust .nudge{font-size:1.05rem}
+.adjust .lock{grid-column:1 / -1;width:100%;font-size:1rem;font-weight:700}
+.adjust .lock[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg)}
+.adjust .lock[aria-pressed="false"]{box-shadow:inset 0 0 0 2px var(--muted)}
+.adjust .fine:active{filter:brightness(.93)}
 input[type=range]{flex:1;height:40px;accent-color:var(--accent)}
 .legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.8rem;color:var(--muted);margin-top:8px}
 .legend i{display:inline-block;width:14px;height:4px;border-radius:2px;vertical-align:middle;margin-right:5px}
@@ -90,7 +104,28 @@ ol.tips li{margin:4px 0}
       <span><i style="background:#34c759"></i>Eye line</span>
       <span><i style="background:#5ac8fa"></i>Center</span>
     </div>
-    <p class="note">Drag with one finger to move. Pinch to zoom, twist with two fingers to rotate. Put the chin on the yellow line, the top of the hair inside the red band, and the eyes in the green band.</p>
+    <div class="adjust" id="adjust">
+      <div class="cell">
+        <span class="cap">Zoom</span>
+        <div class="pair">
+          <button type="button" class="btn fine" id="zoomDec" aria-label="Zoom out" disabled>−</button>
+          <button type="button" class="btn fine" id="zoomInc" aria-label="Zoom in" disabled>+</button>
+        </div>
+      </div>
+      <div class="cell">
+        <span class="cap">Rotate</span>
+        <div class="pair">
+          <button type="button" class="btn fine" id="rotDec" aria-label="Rotate counterclockwise" disabled>−</button>
+          <button type="button" class="btn fine" id="rotInc" aria-label="Rotate clockwise" disabled>+</button>
+        </div>
+      </div>
+      <div class="pair span">
+        <button type="button" class="btn fine nudge" id="nudgeUp" aria-label="Move photo up" disabled>↑ Up</button>
+        <button type="button" class="btn fine nudge" id="nudgeDown" aria-label="Move photo down" disabled>↓ Down</button>
+      </div>
+      <button type="button" class="btn fine lock" id="rotLock" aria-pressed="true">Rotate locked</button>
+    </div>
+    <p class="note">Drag with one finger to move. Pinch to zoom. Twist with two fingers to rotate only when Rotate lock is unlocked. Put the chin on the yellow line, the top of the hair inside the red band, and the eyes in the green band.</p>
     <div class="slider"><span>Zoom</span><input id="zoom" type="range" min="-1" max="1.6" step="0.001" value="0"><output id="zoomOut">100%</output></div>
     <div class="slider"><span>Rotate</span><input id="rot" type="range" min="-15" max="15" step="0.1" value="0"><output id="rotOut">0°</output></div>
     <div class="row" style="margin-top:12px">
@@ -185,7 +220,7 @@ let img = null;          // drawable source (canvas or ImageBitmap), already EXI
 let iw = 0, ih = 0;
 // transform in OUTPUT pixel coords: image center at (cx,cy), scale k (output px per image px), rotation r (rad)
 const T = { cx:0, cy:0, k:1, r:0 };
-let kFit = 1, showGuides = true;
+let kFit = 1, showGuides = true, rotLocked = true;
 let sheetCount = 1, countPinned = false, activePlan = null;
 let layout = { sw:0, sh:0, fx:0, fy:0, fw:0, fh:0, d:1, dpr:1 }; // stage + frame (CSS px), d = css px per output px
 
@@ -332,6 +367,7 @@ stage.addEventListener("pointermove", e => {
     T.cx += (mx - g0.mx)/d; T.cy += (my - g0.my)/d;
     let f = dist / g0.dist, dr = ang - g0.ang;
     if (dr > Math.PI) dr -= 2*Math.PI; if (dr < -Math.PI) dr += 2*Math.PI;
+    if (rotLocked) dr = 0; // lock ignores twist; zoom and pan still apply
     const kBefore = T.k, rBefore = T.r;
     const [ox, oy] = toOut(mx, my);
     // compute clamped values first so the pivot stays consistent
@@ -373,6 +409,94 @@ $("guidesBtn").addEventListener("click", e => {
   e.target.setAttribute("aria-pressed", showGuides); draw();
 });
 
+/* ===== Precise tap controls (zoom / rotate / vertical nudge) ===== */
+const ZOOM_STEP = Math.exp(0.015); // ~1.5% per tap, around the stage center
+const ROT_STEP = 0.5 * Math.PI/180;
+const NUDGE_Y = 4;                  // output pixels
+function setRotLock(on){
+  rotLocked = !!on;
+  const b = $("rotLock");
+  b.setAttribute("aria-pressed", rotLocked ? "true" : "false");
+  b.textContent = rotLocked ? "Rotate locked" : "Rotate unlocked";
+}
+function stepZoom(dir){
+  if (!img) return;
+  const {W,H} = outSize();
+  const lo = kFit*Math.exp(-1), hi = kFit*Math.exp(1.6);
+  const nk = Math.min(hi, Math.max(lo, T.k * (dir > 0 ? ZOOM_STEP : 1/ZOOM_STEP)));
+  zoomRotateAbout(W/2, H/2, nk/T.k, 0); syncSliders(); draw();
+}
+function stepRot(dir){
+  if (!img) return;
+  const {W,H} = outSize();
+  const nr = Math.max(-MAX_R, Math.min(MAX_R, T.r + dir*ROT_STEP));
+  zoomRotateAbout(W/2, H/2, 1, nr - T.r); syncSliders(); draw();
+}
+function stepNudge(dir){
+  if (!img) return;
+  T.cy += dir * NUDGE_Y; // +1 moves the photo down
+  draw();
+}
+function bindHold(btn, fn){
+  let delay = 0, rep = 0, pid = null;
+  const stop = ev => {
+    if (pid == null) return;
+    if (ev && ev.pointerId != null && ev.pointerId !== pid) return;
+    pid = null; clearTimeout(delay); clearInterval(rep); delay = rep = 0;
+  };
+  btn.addEventListener("pointerdown", e => {
+    if (e.button !== 0 || btn.disabled) return;
+    e.preventDefault();
+    stop();
+    pid = e.pointerId;
+    fn();
+    delay = setTimeout(() => {
+      if (pid == null) return;
+      rep = setInterval(() => (btn.disabled ? stop() : fn()), 70);
+    }, 380);
+  });
+  window.addEventListener("pointerup", stop);
+  window.addEventListener("pointercancel", stop);
+  btn.addEventListener("contextmenu", e => e.preventDefault());
+  btn.addEventListener("touchstart", e => e.preventDefault(), { passive:false });
+  btn.addEventListener("keydown", e => {
+    if (e.repeat || btn.disabled) return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault(); fn();
+  });
+}
+function bindToggle(btn, fn){
+  let pid = null;
+  btn.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    pid = e.pointerId;
+    try { btn.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  btn.addEventListener("pointerup", e => {
+    if (e.pointerId !== pid) return;
+    pid = null;
+    const r = btn.getBoundingClientRect();
+    if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) fn();
+  });
+  btn.addEventListener("pointercancel", () => { pid = null; });
+  btn.addEventListener("contextmenu", e => e.preventDefault());
+  btn.addEventListener("touchstart", e => e.preventDefault(), { passive:false });
+  btn.addEventListener("keydown", e => {
+    if (e.repeat) return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault(); fn();
+  });
+}
+bindHold($("zoomDec"), () => stepZoom(-1));
+bindHold($("zoomInc"), () => stepZoom(1));
+bindHold($("rotDec"), () => stepRot(-1));
+bindHold($("rotInc"), () => stepRot(1));
+bindHold($("nudgeUp"), () => stepNudge(-1));
+bindHold($("nudgeDown"), () => stepNudge(1));
+bindToggle($("rotLock"), () => setRotLock(!rotLocked));
+setRotLock(true);
+
 /* ===== Loading (EXIF orientation honored) ===== */
 const MAX_SRC = 3000; // downscale huge photos to keep iOS memory in check
 async function decode(file){
@@ -400,6 +524,7 @@ async function loadFile(file){
     if (src.close) src.close();
     img = c; iw = c.width; ih = c.height;
     $("emptyMsg").hidden = true; $("reset").disabled = false; $("make").disabled = false;
+    ["zoomDec","zoomInc","rotDec","rotInc","nudgeUp","nudgeDown"].forEach(id => $(id).disabled = false);
     $("out").hidden = true;
     resetT();
   } catch (err) {
