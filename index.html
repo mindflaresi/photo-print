@@ -47,6 +47,7 @@ select{width:100%;min-height:48px;font-size:1rem;padding:8px 10px;border-radius:
 .slider{display:flex;align-items:center;gap:10px;margin-top:12px}
 .slider span{width:74px;font-size:.9rem;color:var(--muted)}
 .slider output{width:52px;text-align:right;font-variant-numeric:tabular-nums;font-size:.9rem}
+.slider .step{flex:0 0 48px;width:48px;padding:0;font-size:1.6rem;line-height:1}
 input[type=range]{flex:1;height:40px;accent-color:var(--accent)}
 .legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.8rem;color:var(--muted);margin-top:8px}
 .legend i{display:inline-block;width:14px;height:4px;border-radius:2px;vertical-align:middle;margin-right:5px}
@@ -101,8 +102,17 @@ ol.tips li{margin:4px 0}
     <label class="field" for="sheet">Print sheet</label>
     <select id="sheet">
       <option value="4x6">4 × 6 in photo paper (landscape)</option>
+      <option value="5x7">5 × 7 in photo paper</option>
       <option value="letter">US Letter 8.5 × 11 in</option>
     </select>
+    <label class="field" for="count" style="margin-top:12px">How many photos</label>
+    <div class="slider">
+      <button type="button" class="btn step" id="countDec" aria-label="Fewer photos">−</button>
+      <input id="count" type="range" min="1" max="1" step="1" value="1" aria-describedby="countNote">
+      <button type="button" class="btn step" id="countInc" aria-label="More photos">+</button>
+      <output id="countOut" for="count">1</output>
+    </div>
+    <p class="note" id="countNote"></p>
     <div class="row" style="margin-top:12px">
       <button class="btn primary" id="make" disabled>Create photo &amp; print sheet</button>
     </div>
@@ -118,7 +128,7 @@ ol.tips li{margin:4px 0}
         <button class="btn" id="singleShare" hidden>Share</button>
       </div>
     </figure>
-    <figure>
+    <figure id="sheetFig">
       <figcaption id="sheetCap">Print sheet</figcaption>
       <img id="sheetImg" alt="Print sheet">
       <div class="row" style="margin-top:8px">
@@ -130,7 +140,7 @@ ol.tips li{margin:4px 0}
     <h2 style="margin-top:12px">Printing</h2>
     <ol class="tips">
       <li>Print at <b>100% / Actual size</b>. Turn off “Fit to page” / “Scale to fit”.</li>
-      <li>For the 4×6 sheet, use 4×6 photo paper, or order a regular 4×6 print at a drugstore (CVS, Walgreens, Walmart).</li>
+      <li>For a 4×6 or 5×7 sheet, use that photo paper, or order a regular 4×6 print at a drugstore (CVS, Walgreens, Walmart).</li>
       <li>After printing, measure one photo with a ruler before cutting to confirm the size.</li>
       <li>Cut along the thin gray lines.</li>
     </ol>
@@ -160,6 +170,8 @@ const SPECS = [
 ];
 const SHEETS = {
   "4x6":   { name:"4×6 in", w:1800, h:1200 },
+  // 5×7 is portrait unless landscape fits more copies. 300 DPI → 1500×2100 or 2100×1500.
+  "5x7":   { name:"5×7 in", orients:[{w:1500,h:2100},{w:2100,h:1500}] },
   "letter":{ name:"US Letter", w:2550, h:3300 },
 };
 const mm2px = mm => Math.round(mm / MM_PER_IN * DPI);
@@ -173,6 +185,7 @@ let iw = 0, ih = 0;
 // transform in OUTPUT pixel coords: image center at (cx,cy), scale k (output px per image px), rotation r (rad)
 const T = { cx:0, cy:0, k:1, r:0 };
 let kFit = 1, showGuides = true;
+let sheetCount = 1, countPinned = false, activePlan = null;
 let layout = { sw:0, sh:0, fx:0, fy:0, fw:0, fh:0, d:1, dpr:1 }; // stage + frame (CSS px), d = css px per output px
 
 function outSize(){ return { W: mm2px(spec.w), H: mm2px(spec.h) }; }
@@ -195,7 +208,7 @@ $("preset").addEventListener("change", e => {
     kFit = Math.max(now.W/iw, now.H/ih);
     syncSliders();
   }
-  updateSpecText(); draw();
+  updateSpecText(); draw(); syncCount(null);
 });
 
 /* ===== Layout ===== */
@@ -408,45 +421,135 @@ function computeLayout(SW, SH, w, h, minGap, margin){
   const fit = (L, s) => Math.max(0, Math.floor((L - 2*margin + minGap) / (s + minGap)));
   return { cols: fit(SW, w), rows: fit(SH, h) };
 }
-function renderSheet(photo, key){
-  const S = SHEETS[key], SW = S.w, SH = S.h, w = photo.width, h = photo.height;
+function sheetTitle(plan){
+  if (plan.key === "5x7") return plan.SH >= plan.SW ? "5×7 in portrait" : "5×7 in landscape";
+  return plan.name;
+}
+// Full-sheet grid. Prefers a 0.1 in gap and margin; if that loses a copy, photos may touch
+// and leftover space is spread evenly (same as before). US 2×2 on 4×6 is 600 px on
+// 1800×1200, so 3×2 fills the sheet exactly — a 1 px gutter would drop a column.
+function planSheet(w, h, key){
+  const S = SHEETS[key];
+  const orients = S.orients || [{w:S.w, h:S.h}];
+  let best = null;
+  for (const o of orients) {
+    const touch = computeLayout(o.w, o.h, w, h, 0, 0);
+    const airy = computeLayout(o.w, o.h, w, h, 30, 30);
+    const use = airy.cols * airy.rows >= touch.cols * touch.rows ? airy : touch;
+    const cols = use.cols, rows = use.rows, SW = o.w, SH = o.h;
+    const gx = cols ? (SW - cols*w) / (cols + 1) : 0, gy = rows ? (SH - rows*h) / (rows + 1) : 0;
+    const xs = [], ys = [];
+    for (let i = 0; i < cols; i++) xs.push(Math.round(gx + i*(w + gx)));
+    for (let j = 0; j < rows; j++) ys.push(Math.round(gy + j*(h + gy)));
+    let gapX = Infinity, gapY = Infinity;
+    for (let i = 1; i < xs.length; i++) gapX = Math.min(gapX, xs[i] - xs[i-1] - w);
+    for (let j = 1; j < ys.length; j++) gapY = Math.min(gapY, ys[j] - ys[j-1] - h);
+    const right = xs.length ? xs[xs.length-1] + w : 0;
+    const bottom = ys.length ? ys[ys.length-1] + h : 0;
+    const packed = {
+      key, name:S.name, SW, SH, cols, rows, n: cols*rows, xs, ys, gx, gy,
+      gapX, gapY, photoW:w, photoH:h,
+      gapped: gx >= 4 && gy >= 4,
+      edgeToEdge: gapX < 4 || gapY < 4,
+      labelFits: (SH - bottom) >= 22 || (SW - right) >= 22,
+    };
+    if (!best || packed.n > best.n) best = packed;
+  }
+  return best;
+}
+// n copies, row-major from the top-left. A full sheet keeps the spread-out grid.
+// Fewer copies use a 0.1 in gutter when that still fits; otherwise they touch.
+function placePhotos(plan, n){
+  const w = plan.photoW, h = plan.photoH;
+  n = Math.max(1, Math.min(plan.n, n|0 || 1));
+  if (n === plan.n) {
+    const rects = [];
+    for (let j = 0; j < plan.rows; j++)
+      for (let i = 0; i < plan.cols; i++) rects.push({x:plan.xs[i], y:plan.ys[j], w, h});
+    return { rects, full:true, cols:plan.cols, rows:plan.rows, gap: plan.gapped ? Math.min(plan.gapX, plan.gapY) : 0, gapped: plan.gapped };
+  }
+  const cols = Math.min(plan.cols, n), rows = Math.ceil(n / cols);
+  let gap = 0;
+  for (let g = 30; g >= 0; g--) {
+    if (cols*w + (cols + 1)*g <= plan.SW && rows*h + (rows + 1)*g <= plan.SH) { gap = g; break; }
+  }
+  const rects = [];
+  for (let i = 0; i < n; i++) {
+    const c = i % cols, r = (i / cols)|0;
+    rects.push({ x: gap + c*(w + gap), y: gap + r*(h + gap), w, h });
+  }
+  return { rects, full:false, cols, rows, gap, gapped: gap >= 4 };
+}
+function renderSheet(photo, key, n){
+  const plan = planSheet(photo.width, photo.height, key);
+  const placed = placePhotos(plan, n == null ? plan.n : n);
+  const SW = plan.SW, SH = plan.SH, w = photo.width, h = photo.height;
   const c = document.createElement("canvas"); c.width = SW; c.height = SH;
   const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0,0,SW,SH);
-  // Prefer gaps (>= 0.1 in) and a margin; if that loses copies, allow photos to touch (cut lines on shared edges).
-  const GAP = 30, MARGIN = 30;
-  let L = computeLayout(SW, SH, w, h, GAP, MARGIN), gapped = true;
-  const L0 = computeLayout(SW, SH, w, h, 0, 0);
-  if (L0.cols*L0.rows > L.cols*L.rows) { L = L0; gapped = false; }
-  const { cols, rows } = L;
-  // spread leftover space evenly (space-evenly), integer px
-  const gx = cols ? (SW - cols*w) / (cols + 1) : 0, gy = rows ? (SH - rows*h) / (rows + 1) : 0;
-  const xs = [], ys = [];
-  for (let i = 0; i < cols; i++) xs.push(Math.round(gx + i*(w + gx)));
-  for (let j = 0; j < rows; j++) ys.push(Math.round(gy + j*(h + gy)));
-  gapped = gx >= 4 && gy >= 4;               // real gaps exist after spreading leftover space
-  const cut = () => {
+  const rects = placed.rects;
+  const cutFull = () => {
     x.strokeStyle = "#c4c4c4"; x.lineWidth = 2; x.beginPath();
     const vx = new Set(), hy = new Set();
-    xs.forEach(a => { vx.add(a); vx.add(a + w); }); ys.forEach(b => { hy.add(b); hy.add(b + h); });
+    plan.xs.forEach(a => { vx.add(a); vx.add(a + w); }); plan.ys.forEach(b => { hy.add(b); hy.add(b + h); });
     vx.forEach(v => { const p = Math.min(SW-1, Math.max(1, v)); x.moveTo(p, 0); x.lineTo(p, SH); });
     hy.forEach(v => { const p = Math.min(SH-1, Math.max(1, v)); x.moveTo(0, p); x.lineTo(SW, p); });
     x.stroke();
   };
-  cut();                                         // cut lines run through gaps/margins
-  for (const yy of ys) for (const xx of xs) x.drawImage(photo, xx, yy);
-  if (!gapped) cut();                            // touching photos: draw shared edges on top
-  // label at the edge, in the bottom margin if there is room
-  const label = `${spec.name.split(" – ")[0]} ${spec.w===50.8 ? "2×2 in" : spec.w+"×"+spec.h+" mm"} · ${cols*rows} copies · ${S.name} @ ${DPI} DPI · print at 100% (actual size)`;
-  const room = SH - (ys.length ? ys[ys.length-1] + h : 0);
+  const cutAround = () => {
+    x.strokeStyle = "#c4c4c4"; x.lineWidth = 2; x.beginPath();
+    for (const r of rects) {
+      const l = Math.min(SW-1, Math.max(1, r.x)), t = Math.min(SH-1, Math.max(1, r.y));
+      const rt = Math.min(SW-1, Math.max(1, r.x + r.w)), bt = Math.min(SH-1, Math.max(1, r.y + r.h));
+      x.moveTo(l, t); x.lineTo(rt, t); x.lineTo(rt, bt); x.lineTo(l, bt); x.closePath();
+    }
+    x.stroke();
+  };
+  if (placed.full) { if (plan.gapped) cutFull(); }
+  else if (placed.gapped) cutAround();
+  for (const r of rects) x.drawImage(photo, r.x, r.y);
+  if (placed.full) { if (!plan.gapped) cutFull(); }
+  else if (!placed.gapped) cutAround();
+  const copies = rects.length === 1 ? "1 copy" : `${rects.length} copies`;
+  const label = `${spec.name.split(" – ")[0]} ${spec.w===50.8 ? "2×2 in" : spec.w+"×"+spec.h+" mm"} · ${copies} · ${sheetTitle(plan)} @ ${DPI} DPI · print at 100% (actual size)`;
+  let maxR = 0, maxB = 0;
+  for (const r of rects) { maxR = Math.max(maxR, r.x + r.w); maxB = Math.max(maxB, r.y + r.h); }
+  const room = SH - maxB, rRoom = SW - maxR;
   x.fillStyle = "#8a8a8a"; x.textBaseline = "middle";
   const pill = (fs, px, py) => { const tw = x.measureText(label).width; x.fillStyle = "#fff"; x.fillRect(px-6, py-fs*0.65, tw+12, fs*1.3); x.fillStyle = "#8a8a8a"; x.fillText(label, px, py); };
   if (room >= 22) { const fs = Math.min(24, Math.floor(room*0.55)); x.font = `${fs}px -apple-system, system-ui, sans-serif`; pill(fs, 20, SH - room/2); }
-  else {
-    const rRoom = SW - (xs.length ? xs[xs.length-1] + w : 0);
-    if (rRoom >= 22) { x.save(); x.translate(SW - rRoom/2, SH - 20); x.rotate(-Math.PI/2);
-      const fs = Math.min(24, Math.floor(rRoom*0.55)); x.font = `${fs}px -apple-system, system-ui, sans-serif`; pill(fs, 0, 0); x.restore(); }
-  }
-  return { canvas:c, count: cols*rows, cols, rows, gapped };
+  else if (rRoom >= 22) { x.save(); x.translate(SW - rRoom/2, SH - 20); x.rotate(-Math.PI/2);
+    const fs = Math.min(24, Math.floor(rRoom*0.55)); x.font = `${fs}px -apple-system, system-ui, sans-serif`; pill(fs, 0, 0); x.restore(); }
+  return { canvas:c, count:rects.length, cols:placed.cols, rows:placed.rows, gapped:placed.gapped, rects, plan, gap:placed.gap, full:placed.full };
+}
+let countLock = false;
+function syncCount(fromUser){
+  if (countLock) return activePlan;
+  countLock = true;
+  try {
+    const plan = planSheet(mm2px(spec.w), mm2px(spec.h), $("sheet").value);
+    activePlan = plan;
+    const max = Math.max(1, plan.n);
+    if (fromUser != null) {
+      const v = Math.max(1, Math.min(max, Math.round(+fromUser)));
+      countPinned = v < max;
+      sheetCount = v;
+    } else if (!countPinned) sheetCount = max;
+    else sheetCount = Math.max(1, Math.min(max, sheetCount));
+    const el = $("count");
+    el.min = "1"; el.max = String(max); el.value = String(sheetCount);
+    $("countOut").textContent = String(sheetCount);
+    $("countDec").disabled = sheetCount <= 1;
+    $("countInc").disabled = sheetCount >= max;
+    let note = `${sheetCount} of ${max} on a ${sheetTitle(plan)} sheet`;
+    if (sheetCount < max) note += ", packed at the top-left";
+    if (plan.edgeToEdge) {
+      note += ". A full sheet is edge to edge";
+      if (!plan.labelFits) note += " and has no room for the size label";
+      note += " — a gap would fit fewer photos";
+    }
+    $("countNote").textContent = note + ".";
+    return plan;
+  } finally { countLock = false; }
 }
 // JPEG with 300 DPI written into the JFIF header (so print apps know the physical size)
 function toJpeg300(canvas){
@@ -476,25 +579,33 @@ async function make(){
   try {
     urls.splice(0).forEach(u => URL.revokeObjectURL(u));
     const photo = renderPhoto();
-    const key = $("sheet").value, sheet = renderSheet(photo, key);
+    const key = $("sheet").value, sheet = renderSheet(photo, key, sheetCount);
     const [pb, sb] = await Promise.all([toJpeg300(photo), toJpeg300(sheet.canvas)]);
     setOut($("singleImg"), $("singleDl"), $("singleShare"), pb, `passport-${spec.id}-${photo.width}x${photo.height}.jpg`);
-    setOut($("sheetImg"), $("sheetDl"), $("sheetShare"), sb, `passport-${spec.id}-sheet-${key}.jpg`);
+    setOut($("sheetImg"), $("sheetDl"), $("sheetShare"), sb, `passport-${spec.id}-sheet-${key}-${sheet.count}.jpg`);
     $("singleCap").textContent = `Single photo · ${photo.width}×${photo.height} px (${spec.w===50.8?"2×2 in":spec.w+"×"+spec.h+" mm"})`;
-    $("sheetCap").textContent = `${SHEETS[key].name} sheet · ${sheet.canvas.width}×${sheet.canvas.height} px · ${sheet.count} copies`;
+    $("sheetCap").textContent = `${sheetTitle(sheet.plan)} sheet · ${sheet.canvas.width}×${sheet.canvas.height} px · ${sheet.count === 1 ? "1 copy" : sheet.count + " copies"}`;
     $("out").hidden = false;
     lastResult = { gen: ++gen, photoW:photo.width, photoH:photo.height, sheetW:sheet.canvas.width, sheetH:sheet.canvas.height,
-      count:sheet.count, cols:sheet.cols, rows:sheet.rows, gapped:sheet.gapped, photoBytes:pb.size, sheetBytes:sb.size };
+      count:sheet.count, cols:sheet.cols, rows:sheet.rows, gapped:sheet.gapped, gap:sheet.gap, full:sheet.full,
+      rects:sheet.rects, edgeToEdge:sheet.plan.edgeToEdge, labelFits:sheet.plan.labelFits,
+      photoBytes:pb.size, sheetBytes:sb.size };
+    window.__pp.sheetCanvas = sheet.canvas;
     $("out").scrollIntoView({ behavior:"smooth", block:"start" });
   } finally { $("make").disabled = false; $("make").textContent = "Create photo & print sheet"; }
 }
 $("make").addEventListener("click", make);
+$("sheet").addEventListener("change", () => syncCount(null));
+$("count").addEventListener("input", e => syncCount(e.target.value));
+$("countDec").addEventListener("click", () => syncCount(sheetCount - 1));
+$("countInc").addEventListener("click", () => syncCount(sheetCount + 1));
 
 /* ===== Init ===== */
 let rT; window.addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(() => { layoutStage(); draw(); }, 100); });
-layoutStage(); updateSpecText(); draw();
+layoutStage(); updateSpecText(); draw(); syncCount(null);
 // test hook (harmless)
-window.__pp = { T, get spec(){return spec}, get layout(){return layout}, get result(){return lastResult}, get size(){return [iw,ih]} };
+window.__pp = { T, get spec(){return spec}, get layout(){return layout}, get result(){return lastResult}, get size(){return [iw,ih]},
+  get count(){return sheetCount}, get pinned(){return countPinned}, get plan(){return activePlan}, planSheet, placePhotos };
 </script>
 </body>
 </html>
