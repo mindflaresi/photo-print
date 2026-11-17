@@ -65,6 +65,12 @@ select{width:100%;min-height:48px;font-size:1rem;padding:8px 10px;border-radius:
 input[type=range]{flex:1;height:40px;accent-color:var(--accent)}
 .legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.8rem;color:var(--muted);margin-top:8px}
 .legend i{display:inline-block;width:14px;height:4px;border-radius:2px;vertical-align:middle;margin-right:5px}
+.check{display:flex;align-items:center;gap:12px;min-height:48px;margin-top:12px;padding:10px 14px;
+  font-size:1rem;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none;
+  background:var(--btn);border-radius:12px}
+.check input{width:22px;height:22px;margin:0;accent-color:var(--accent);flex:0 0 auto}
+.check span{flex:1 1 auto}
+.usage{margin:2px 0 0;padding:0 4px;font-size:.8rem;line-height:1.45;color:var(--muted);text-align:center}
 .out img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:#fff;
   -webkit-touch-callout:default}
 .out .single img{max-width:200px;margin:0 auto}
@@ -141,6 +147,10 @@ ol.tips li{margin:4px 0}
       <option value="5x7">5 × 7 in photo paper</option>
       <option value="letter">US Letter 8.5 × 11 in</option>
     </select>
+    <label class="check" for="infoLine">
+      <input id="infoLine" type="checkbox">
+      <span>Include info line on the sheet</span>
+    </label>
     <label class="field" for="count" style="margin-top:12px">How many photos</label>
     <div class="slider">
       <button type="button" class="btn step" id="countDec" aria-label="Fewer photos">−</button>
@@ -181,6 +191,7 @@ ol.tips li{margin:4px 0}
       <li>Cut along the thin gray lines.</li>
     </ol>
   </section>
+  <footer class="usage" id="usageFoot">Sheets created: 0 · Last used: Never</footer>
 </main>
 
 <script>
@@ -551,9 +562,11 @@ function sheetTitle(plan){
   if (plan.key === "5x7") return plan.SH >= plan.SW ? "5×7 in portrait" : "5×7 in landscape";
   return plan.name;
 }
-// Full-sheet grid. Prefers a 0.1 in gap and margin; if that loses a copy, photos may touch
-// and leftover space is spread evenly (same as before). US 2×2 on 4×6 is 600 px on
-// 1800×1200, so 3×2 fills the sheet exactly — a 1 px gutter would drop a column.
+// Full-sheet grid. Prefers a 0.1 in gap and margin when counting copies; if that loses a
+// copy, photos may touch and leftover is split into the same gaps as before. The first
+// photo is flush with the top-left corner (extra space stays on the bottom and right).
+// US 2×2 on 4×6 is 600 px on 1800×1200, so 3×2 fills the sheet exactly — a 1 px gutter
+// would drop a column.
 function planSheet(w, h, key){
   const S = SHEETS[key];
   const orients = S.orients || [{w:S.w, h:S.h}];
@@ -565,8 +578,16 @@ function planSheet(w, h, key){
     const cols = use.cols, rows = use.rows, SW = o.w, SH = o.h;
     const gx = cols ? (SW - cols*w) / (cols + 1) : 0, gy = rows ? (SH - rows*h) / (rows + 1) : 0;
     const xs = [], ys = [];
-    for (let i = 0; i < cols; i++) xs.push(Math.round(gx + i*(w + gx)));
-    for (let j = 0; j < rows; j++) ys.push(Math.round(gy + j*(h + gy)));
+    for (let i = 0; i < cols; i++) {
+      let x = Math.round(i * (w + gx));
+      if (x + w > SW) x = Math.max(0, SW - w);
+      xs.push(x);
+    }
+    for (let j = 0; j < rows; j++) {
+      let y = Math.round(j * (h + gy));
+      if (y + h > SH) y = Math.max(0, SH - h);
+      ys.push(y);
+    }
     let gapX = Infinity, gapY = Infinity;
     for (let i = 1; i < xs.length; i++) gapX = Math.min(gapX, xs[i] - xs[i-1] - w);
     for (let j = 1; j < ys.length; j++) gapY = Math.min(gapY, ys[j] - ys[j-1] - h);
@@ -583,7 +604,7 @@ function planSheet(w, h, key){
   }
   return best;
 }
-// n copies, row-major from the top-left. A full sheet keeps the spread-out grid.
+// n copies, row-major from the top-left corner. A full sheet keeps that grid.
 // Fewer copies use a 0.1 in gutter when that still fits; otherwise they touch.
 function placePhotos(plan, n){
   const w = plan.photoW, h = plan.photoH;
@@ -602,7 +623,10 @@ function placePhotos(plan, n){
   const rects = [];
   for (let i = 0; i < n; i++) {
     const c = i % cols, r = (i / cols)|0;
-    rects.push({ x: gap + c*(w + gap), y: gap + r*(h + gap), w, h });
+    let x = c*(w + gap), y = r*(h + gap);
+    if (x + w > plan.SW) x = Math.max(0, plan.SW - w);
+    if (y + h > plan.SH) y = Math.max(0, plan.SH - h);
+    rects.push({ x, y, w, h });
   }
   return { rects, full:false, cols, rows, gap, gapped: gap >= 4 };
 }
@@ -613,20 +637,23 @@ function renderSheet(photo, key, n){
   const c = document.createElement("canvas"); c.width = SW; c.height = SH;
   const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0,0,SW,SH);
   const rects = placed.rects;
+  const onEdge = (v, limit) => v <= 0 || v >= limit;
   const cutFull = () => {
     x.strokeStyle = "#c4c4c4"; x.lineWidth = 2; x.beginPath();
     const vx = new Set(), hy = new Set();
     plan.xs.forEach(a => { vx.add(a); vx.add(a + w); }); plan.ys.forEach(b => { hy.add(b); hy.add(b + h); });
-    vx.forEach(v => { const p = Math.min(SW-1, Math.max(1, v)); x.moveTo(p, 0); x.lineTo(p, SH); });
-    hy.forEach(v => { const p = Math.min(SH-1, Math.max(1, v)); x.moveTo(0, p); x.lineTo(SW, p); });
+    vx.forEach(v => { if (onEdge(v, SW)) return; x.moveTo(v, 0); x.lineTo(v, SH); });
+    hy.forEach(v => { if (onEdge(v, SH)) return; x.moveTo(0, v); x.lineTo(SW, v); });
     x.stroke();
   };
   const cutAround = () => {
     x.strokeStyle = "#c4c4c4"; x.lineWidth = 2; x.beginPath();
     for (const r of rects) {
-      const l = Math.min(SW-1, Math.max(1, r.x)), t = Math.min(SH-1, Math.max(1, r.y));
-      const rt = Math.min(SW-1, Math.max(1, r.x + r.w)), bt = Math.min(SH-1, Math.max(1, r.y + r.h));
-      x.moveTo(l, t); x.lineTo(rt, t); x.lineTo(rt, bt); x.lineTo(l, bt); x.closePath();
+      const l = r.x, t = r.y, rt = r.x + r.w, bt = r.y + r.h;
+      if (!onEdge(t, SH)) { x.moveTo(l, t); x.lineTo(rt, t); }
+      if (!onEdge(rt, SW)) { x.moveTo(rt, t); x.lineTo(rt, bt); }
+      if (!onEdge(bt, SH)) { x.moveTo(rt, bt); x.lineTo(l, bt); }
+      if (!onEdge(l, SW)) { x.moveTo(l, bt); x.lineTo(l, t); }
     }
     x.stroke();
   };
@@ -635,16 +662,19 @@ function renderSheet(photo, key, n){
   for (const r of rects) x.drawImage(photo, r.x, r.y);
   if (placed.full) { if (!plan.gapped) cutFull(); }
   else if (!placed.gapped) cutAround();
-  const copies = rects.length === 1 ? "1 copy" : `${rects.length} copies`;
-  const label = `${spec.name.split(" – ")[0]} ${spec.w===50.8 ? "2×2 in" : spec.w+"×"+spec.h+" mm"} · ${copies} · ${sheetTitle(plan)} @ ${DPI} DPI · print at 100% (actual size)`;
-  let maxR = 0, maxB = 0;
-  for (const r of rects) { maxR = Math.max(maxR, r.x + r.w); maxB = Math.max(maxB, r.y + r.h); }
-  const room = SH - maxB, rRoom = SW - maxR;
-  x.fillStyle = "#8a8a8a"; x.textBaseline = "middle";
-  const pill = (fs, px, py) => { const tw = x.measureText(label).width; x.fillStyle = "#fff"; x.fillRect(px-6, py-fs*0.65, tw+12, fs*1.3); x.fillStyle = "#8a8a8a"; x.fillText(label, px, py); };
-  if (room >= 22) { const fs = Math.min(24, Math.floor(room*0.55)); x.font = `${fs}px -apple-system, system-ui, sans-serif`; pill(fs, 20, SH - room/2); }
-  else if (rRoom >= 22) { x.save(); x.translate(SW - rRoom/2, SH - 20); x.rotate(-Math.PI/2);
-    const fs = Math.min(24, Math.floor(rRoom*0.55)); x.font = `${fs}px -apple-system, system-ui, sans-serif`; pill(fs, 0, 0); x.restore(); }
+  if ($("infoLine").checked) {
+    const copies = rects.length === 1 ? "1 copy" : `${rects.length} copies`;
+    const label = `${spec.name.split(" – ")[0]} ${spec.w===50.8 ? "2×2 in" : spec.w+"×"+spec.h+" mm"} · ${copies} · ${sheetTitle(plan)} @ ${DPI} DPI · print at 100% (actual size)`;
+    let maxR = 0, maxB = 0;
+    for (const r of rects) { maxR = Math.max(maxR, r.x + r.w); maxB = Math.max(maxB, r.y + r.h); }
+    const room = SH - maxB, rRoom = SW - maxR;
+    x.fillStyle = "#8a8a8a"; x.textBaseline = "middle";
+    const pill = (fs, px, py) => { const tw = x.measureText(label).width; x.fillStyle = "#fff"; x.fillRect(px-6, py-fs*0.65, tw+12, fs*1.3); x.fillStyle = "#8a8a8a"; x.fillText(label, px, py); };
+    // Leftover bottom or right margin only — never shift the top-left photo.
+    if (room >= 22) { const fs = Math.min(24, Math.floor(room*0.55)); x.font = `${fs}px -apple-system, system-ui, sans-serif`; pill(fs, 20, SH - room/2); }
+    else if (rRoom >= 22) { x.save(); x.translate(SW - rRoom/2, SH - 20); x.rotate(-Math.PI/2);
+      const fs = Math.min(24, Math.floor(rRoom*0.55)); x.font = `${fs}px -apple-system, system-ui, sans-serif`; pill(fs, 0, 0); x.restore(); }
+  }
   return { canvas:c, count:rects.length, cols:placed.cols, rows:placed.rows, gapped:placed.gapped, rects, plan, gap:placed.gap, full:placed.full };
 }
 let countLock = false;
@@ -701,6 +731,7 @@ function setOut(imgEl, dlEl, shareEl, blob, name){
 let lastResult = null, gen = 0;
 async function make(){
   if (!img) return;
+  bumpUsage();
   $("make").disabled = true; $("make").textContent = "Creating…";
   try {
     urls.splice(0).forEach(u => URL.revokeObjectURL(u));
@@ -726,8 +757,39 @@ $("count").addEventListener("input", e => syncCount(e.target.value));
 $("countDec").addEventListener("click", () => syncCount(sheetCount - 1));
 $("countInc").addEventListener("click", () => syncCount(sheetCount + 1));
 
+/* ===== Info line + per-device usage ===== */
+const INFO_KEY = "pp-info-line", COUNT_KEY = "pp-sheets-created", LAST_KEY = "pp-last-used";
+const memStore = {};
+function storageGet(k){ try { return localStorage.getItem(k); } catch (_) { return memStore[k] == null ? null : memStore[k]; } }
+function storageSet(k, v){ try { localStorage.setItem(k, v); } catch (_) { memStore[k] = v; } }
+function formatLast(ms){
+  const n = +ms;
+  if (!n) return "Never";
+  const d = new Date(n);
+  if (isNaN(d.getTime())) return "Never";
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  let h = d.getHours();
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12; if (h === 0) h = 12;
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return months[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear() + ", " + h + ":" + min + " " + ampm;
+}
+function renderUsage(){
+  const n = Math.max(0, parseInt(storageGet(COUNT_KEY) || "0", 10) || 0);
+  $("usageFoot").textContent = "Sheets created: " + n + " · Last used: " + formatLast(storageGet(LAST_KEY));
+}
+function bumpUsage(){
+  const n = Math.max(0, parseInt(storageGet(COUNT_KEY) || "0", 10) || 0) + 1;
+  storageSet(COUNT_KEY, String(n));
+  storageSet(LAST_KEY, String(Date.now()));
+  renderUsage();
+}
+function loadInfoPref(){ $("infoLine").checked = storageGet(INFO_KEY) === "1"; }
+$("infoLine").addEventListener("change", () => { storageSet(INFO_KEY, $("infoLine").checked ? "1" : "0"); });
+
 /* ===== Init ===== */
 let rT; window.addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(() => { layoutStage(); draw(); }, 100); });
+loadInfoPref(); renderUsage();
 layoutStage(); updateSpecText(); draw(); syncCount(null);
 // test hook (harmless)
 window.__pp = { T, get spec(){return spec}, get layout(){return layout}, get result(){return lastResult}, get size(){return [iw,ih]},
